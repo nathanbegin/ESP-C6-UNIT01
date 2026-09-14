@@ -1,0 +1,18 @@
+idf_component_register(
+    SRCS
+        "zb_door_sensors.c"
+        "app_config.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        esp-zigbee-lib
+        esp-zboss-lib
+        led_strip
+        driver
+        nvs_flash
+        freertos
+        esp_driver_gpio
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_http_server
+)
