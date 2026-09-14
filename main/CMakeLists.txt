@@ -2,6 +2,8 @@ idf_component_register(
     SRCS
         "zb_door_sensors.c"
         "app_config.c"
+        "fan_controller.c"
+        "fan_control.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp-zigbee-lib

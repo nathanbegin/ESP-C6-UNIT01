@@ -1,0 +1,19 @@
+menu "ESP-C6-UNIT01 relay control"
+
+config APP_RELAY_ACTIVE_LOW
+    bool "Relay inputs are active LOW"
+    default y
+    help
+        Enabled: LOW energizes a coil and HIGH releases it.
+        Disable for a relay module with active-HIGH inputs.
+        Verify the actual module before connecting the controlled equipment.
+
+config APP_RELAY_SETTLE_MS
+    int "Delay between relay switching stages (ms)"
+    range 10 500
+    default 30
+    help
+        Must exceed the module's relay operate/release/bounce times.
+        Transitions open K4 and pass through position 1 before changing speed.
+
+endmenu
