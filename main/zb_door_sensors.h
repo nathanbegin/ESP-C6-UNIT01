@@ -60,6 +60,9 @@
 #define HA_DOOR1_ENDPOINT       2
 #define HA_DOOR2_ENDPOINT       3
 #define HA_DOOR3_ENDPOINT       4
+#define HA_FAN1_ENDPOINT        5
+#define HA_FAN2_ENDPOINT        6
+#define HA_EXCHANGE_ENDPOINT    7
 
 /* ---------- Divers Zigbee ---------- */
 #define INSTALLCODE_POLICY_ENABLE       false

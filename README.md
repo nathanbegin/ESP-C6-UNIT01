@@ -1,109 +1,113 @@
 # ESP-C6-UNIT01
 
-Firmware ESP-IDF pour un ESP32-C6 : **3 contacts de porte Zigbee + LED embarquée On/Off + portail Wi-Fi de maintenance**.
+Firmware ESP-IDF pour ESP32-C6 : trois contacts de porte, une LED et une commande de ventilation par quatre relais. Fabricant Zigbee : `NathanSensors`; modèle : `ESP-C6-UNIT01`.
 
-Fabricant déclaré : `NathanSensors`. Modèle attendu : `ESP-C6-UNIT01`.
+## Trois commandes de ventilation
 
-Ce dépôt a été préparé le 14 septembre 2026 à partir de `ESP-C6-UNIT01_2026-09-14.zip`. Les sources du firmware, le convertisseur et les configurations sont conservés sans modification. La documentation a été actualisée à partir du code. Les problèmes repérés sont décrits dans [docs/ANALYSE.md](docs/ANALYSE.md). L'ancien README est conservé comme document historique dans [docs/README-original.md](docs/README-original.md).
+| Interrupteur | ON | OFF |
+| --- | --- | --- |
+| **Fan 1** | Position 2, basse vitesse; désactive Fan 2 | Passe sur Off si Fan 1 est actif |
+| **Fan 2** | Position 3, haute vitesse; désactive Fan 1 | Passe sur Off si Fan 2 est actif |
+| **Échange extérieur** | Ferme SW2 avec K4 | Ouvre SW2 avec K4 |
 
-## Fonctions et câblage
+**Off = Fan 1 et Fan 2 désactivés**, position 1 du sélecteur. Éteindre une vitesse déjà inactive ne coupe pas l'autre vitesse. La demande d'échange est indépendante et conservée pendant les changements de mode, y compris Off; selon le schéma fourni, elle n'a pas d'effet électrique en position 1.
 
-| Fonction | GPIO | Endpoint Zigbee | Type | Propriété du convertisseur |
-| --- | --- | --- | --- | --- |
-| LED RGB embarquée | 8 | 1 | On/Off, cluster `0x0006` | `state_led` |
-| Contact porte 1 | 2 | 2 | IAS Zone, cluster `0x0500` | `contact_door1` |
-| Contact porte 2 | 3 | 3 | IAS Zone, cluster `0x0500` | `contact_door2` |
-| Contact porte 3 | 4 | 4 | IAS Zone, cluster `0x0500` | `contact_door3` |
-| Bouton BOOT | 9 | — | Entrée locale, appui long | — |
+Les relais K1..K4 n'ont aucun endpoint individuel. La LED et les trois contacts existants sont conservés.
 
-Chaque contact magnétique se branche entre son GPIO et GND. Le firmware active une résistance de rappel interne vers le haut.
+| Endpoint | Fonction | GPIO / propriété Zigbee2MQTT |
+| --- | --- | --- |
+| 1 | LED blanche On/Off | GPIO8 / `state_led` |
+| 2 | Porte 1 | GPIO2 / `contact_door1` |
+| 3 | Porte 2 | GPIO3 / `contact_door2` |
+| 4 | Porte 3 | GPIO4 / `contact_door3` |
+| 5 | Fan 1, basse vitesse | `state_fan1` |
+| 6 | Fan 2, haute vitesse | `state_fan2` |
+| 7 | Échange extérieur | `state_exchange` |
 
-- Contact fermé vers GND : niveau bas, porte considérée fermée.
-- Contact ouvert : niveau haut, porte considérée ouverte.
-- Entrée non raccordée : également considérée ouverte.
-- Cette correspondance suppose un contact fermé lorsque la porte est fermée. Un capteur de logique inverse nécessite une adaptation.
+Les contacts valent `true` pour fermé, `false` pour ouvert. Les interrupteurs utilisent `ON` / `OFF`; les commandes On, Off et Toggle sont acceptées.
 
-Utiliser des contacts secs sur ces entrées, sans y injecter une tension externe. Les broches correspondent à la carte décrite dans les sources; vérifier le brochage de la carte réellement utilisée.
+## Raccordement et paramètres
 
-La LED est RGB physiquement, mais le firmware ne propose que deux états : éteinte ou blanc doux avec RGB `(24, 24, 24)`. Il ne contient aucune commande de relais.
-
-## Fonctionnement normal
-
-1. Initialisation de la mémoire persistante NVS et lecture du mode de démarrage.
-2. En mode normal, initialisation de la LED, des entrées de porte et de la surveillance du bouton BOOT.
-3. Démarrage de Zigbee en **routeur** : `DOOR_DEVICE_AS_ROUTER=true`, capacité configurée de dix enfants.
-4. Si l'appareil est neuf pour le réseau, recherche d'un réseau ouvert à l'appairage. En cas d'échec du steering, un nouvel essai est programmé après une seconde.
-5. Chaque changement électrique déclenche une interruption. Une tâche FreeRTOS applique un anti-rebond de 50 ms, relit le GPIO et transmet les changements d'état.
-6. Les commandes Zigbee On/Off de l'endpoint 1 pilotent la LED.
-
-Une ouverture produit `ZoneStatus=1`; une fermeture produit `ZoneStatus=0`. La notification est envoyée directement au coordinateur `0x0000`, endpoint `1`. Le convertisseur traduit cela en `contact_doorN=false` pour ouvert et `true` pour fermé.
-
-L'appareil utilise Zigbee pour communiquer avec le coordinateur. Dans l'intégration prévue, Zigbee2MQTT convertit les messages puis les publie vers MQTT pour Home Assistant. Le firmware n'est pas lui-même un client MQTT ou un client du Wi-Fi domestique.
-
-Attention : le code actuel ne retransmet pas automatiquement les trois états après la connexion au réseau. Voir l'analyse avant de considérer les états au redémarrage comme fiables.
-
-## Portail Wi-Fi
-
-Pendant le fonctionnement normal, maintenir BOOT pendant environ trois secondes, puis relâcher le bouton. Le firmware enregistre le mode CONFIG dans NVS et redémarre.
-
-1. Se connecter au réseau ouvert `NathanSensors-Setup`.
-2. Ouvrir `http://192.168.4.1` dans un navigateur.
-3. Cliquer sur « Terminer et revenir au Zigbee » pour enregistrer le mode normal et redémarrer.
-
-Le point d'accès utilise le canal 1 et accepte au maximum quatre clients. Zigbee et la surveillance des portes ne sont pas démarrés dans ce mode. Un simple redémarrage conserve le mode CONFIG : il faut utiliser le bouton de la page pour revenir au fonctionnement normal.
-
-Le portail actuel contient uniquement ce bouton de retour. Il ne permet pas de changer les GPIO, les noms, les paramètres Wi-Fi ou d'effectuer un factory reset. Il ne fournit pas de mise à jour OTA. La redirection des erreurs HTTP 404 vers `/` ne constitue pas un service DNS captif; ouvrir directement l'adresse IP reste la procédure prévue.
-
-## Compilation et programmation
-
-Versions relevées dans `dependencies.lock` :
-
-| Dépendance | Version |
+| GPIO ESP32-C6 | Module relais |
 | --- | --- |
-| ESP-IDF | 5.5.4 |
-| espressif/esp-zigbee-lib | 1.6.8 |
-| espressif/esp-zboss-lib | 1.6.4 |
-| espressif/led_strip | 3.0.3 |
+| 6 | IN1 / K1 |
+| 7 | IN2 / K2 |
+| 10 | IN3 / K3 |
+| 11 | IN4 / K4 |
 
-Le manifeste autorise ESP-IDF `>=5.5.0`; la version 5.5.4 est celle enregistrée dans l'archive, sans constituer une validation de toutes les versions plus récentes.
+Utiliser quatre relais **SPDT à contacts secs COM/NC/NO**, selon [docs/RELAIS.md](docs/RELAIS.md). Les broches supposent une DevKitC avec ces GPIO accessibles. Les entrées du module doivent être compatibles 3,3 V; une bobine seule ne se branche pas directement à un GPIO. L'alimentation du module et sa masse logique suivent son schéma réel. Les contacts du circuit commandé restent isolés des GPIO et de la masse ESP32.
 
-Depuis un terminal ESP-IDF configuré, à la racine du projet :
+Dans `idf.py menuconfig` > **ESP-C6-UNIT01 relay control** :
+
+- `APP_RELAY_ACTIVE_LOW` : **activé par défaut**. LOW active une bobine; désactiver pour un module actif HIGH.
+- `APP_RELAY_SETTLE_MS` : **30 ms par étape**, à adapter aux temps de commutation et de rebond du module.
+
+Les quatre bobines sont relâchées avant de démarrer Zigbee ou Wi-Fi : Off, échange désactivé. Les modes ne sont pas restaurés après une coupure. Le driver matériel doit imposer le bon état pendant le reset, avant l'exécution du firmware.
+
+Les transitions de vitesse ouvrent K4, passent par la position 1, isolent K3 avant de le commuter, sélectionnent la vitesse puis rétablissent la demande d'échange. Les délais se déroulent dans une tâche dédiée. Les rapports décrivent l'état commandé des sorties : il n'y a pas de retour de position mécanique des relais.
+
+## Mise à jour d'un appareil appairé
+
+1. Vérifier le câblage, la polarité des entrées et les délais du module.
+2. Compiler et flasher le firmware.
+3. Remplacer le convertisseur externe dans Zigbee2MQTT par **un seul** fichier : `c6_door_sensor.mjs` (ESM, installations actuelles) ou `c6_door_sensor.js` (CommonJS, installations compatibles). Retirer l'ancien convertisseur actif pour ce modèle.
+4. Refaire l'interview pour découvrir les endpoints 5, 6 et 7. Si nécessaire, retirer puis réappairer; vérifier ensuite les automatisations existantes.
+5. Tester les états des contacts relais avec le circuit commandé déconnecté, puis vérifier le comportement réel.
+
+La [documentation Zigbee2MQTT](https://www.zigbee2mqtt.io/advanced/more/external_converters.html) indique le dossier `external_converters` à côté de `configuration.yaml`, une gestion depuis la console de développement, et `enable_external_js` pour les nouvelles installations à partir de 2.11.0. Ne pas charger les deux variantes simultanément.
+
+Le convertisseur lit les états pendant sa configuration. Le firmware publie après les commandes, après la connexion au réseau et toutes les 30 secondes. Un message IAS sans statut valide ne modifie plus le contact.
+
+Messages vers `zigbee2mqtt/NOM_APPAREIL/set` :
+
+```json
+{"state_fan1":"ON"}
+```
+
+```json
+{"state_fan2":"ON","state_exchange":"ON"}
+```
+
+Pour arrêter quelle que soit la vitesse :
+
+```json
+{"state_fan1":"OFF","state_fan2":"OFF"}
+```
+
+## Portes et portail Wi-Fi
+
+Chaque contact de porte se branche entre son GPIO et GND. Le pull-up interne est actif : contact fermé = porte fermée; contact ouvert ou non raccordé = porte ouverte. Les entrées sont échantillonnées toutes les 10 ms et validées après 50 ms de stabilité. Les rapports initiaux et périodiques resynchronisent les états.
+
+Maintenir BOOT (GPIO9) environ trois secondes en mode normal puis relâcher. L'appareil enregistre CONFIG en NVS et redémarre. Se connecter à `NathanSensors-Setup`, ouvrir `http://192.168.4.1`, puis utiliser le bouton de la page pour revenir au mode normal.
+
+En CONFIG, les relais sont relâchés; Zigbee et la surveillance des portes ne démarrent pas. Ce mode persiste après une coupure. Le portail ne propose pas encore l'affectation des GPIO, le factory reset ou l'OTA.
+
+## Compilation
+
+Versions verrouillées : ESP-IDF **5.5.4**, `esp-zigbee-lib` **1.6.8**, `esp-zboss-lib` **1.6.4**, `led_strip` **3.0.3**. Cible `esp32c6`, flash **8 Mo**, partition applicative 5 Mio. Le rôle Zigbee reste **routeur**.
+
+Dans un terminal ESP-IDF configuré :
 
 ```bash
+idf.py menuconfig
 idf.py build
 idf.py -p COM5 flash monitor
 ```
 
-Remplacer `COM5` par le port de la carte. Sous Linux, utiliser le port réel, par exemple `/dev/ttyACM0` pour une connexion USB série native.
+Adapter le port. Le `sdkconfig` complet reste versionné; les defaults imposent également 8 Mo pour une configuration régénérée.
 
-Le `sdkconfig` fourni sélectionne déjà `esp32c6`, une flash de **8 Mo**, la pile Zigbee ZCZR et la table de partitions personnalisée. Il est versionné volontairement. La partition applicative fait 5 Mio : cette table ne convient pas à une flash de 4 Mo.
+## Fonctions internes et tests
 
-Si la configuration est régénérée ou la cible réinitialisée, vérifier la taille de flash dans `idf.py menuconfig` avant de compiler : `sdkconfig.defaults` ne contient pas encore le réglage de flash 8 Mo. Aucun outil ESP-IDF n'était disponible dans l'environnement d'analyse; la compilation et le flash n'ont pas été exécutés.
+`fan_set_mode(FAN_OFF / FAN_LOW / FAN_HIGH)` et `outdoor_exchange_set(bool)` déposent une requête dans la file de la tâche des relais. `ESP_OK` signifie que la requête est acceptée, pas déjà exécutée. `fan_control_set_switch()` traduit les interrupteurs en modes exclusifs.
 
-## Zigbee2MQTT et Home Assistant
+La logique indépendante du matériel est dans `main/fan_controller.c`; son adaptation GPIO/FreeRTOS est dans `main/fan_control.c`.
 
-Le convertisseur fourni, `c6_door_sensor.js`, expose trois contacts et un interrupteur pour la LED. Il utilise CommonJS (`require`, `module.exports`). Sa compatibilité avec la version de Zigbee2MQTT installée doit être vérifiée.
+```bash
+bash tests/run.sh
+```
 
-La [documentation actuelle des convertisseurs externes](https://www.zigbee2mqtt.io/advanced/more/external_converters.html) indique un dossier `external_converters` à côté de `configuration.yaml`, ou une gestion depuis Settings > Dev console > External converters. Les nouvelles installations à partir de 2.11.0 désactivent ces scripts par défaut; vérifier `enable_external_js`. Les exemples actuels utilisent des modules `.mjs`. Ne pas appliquer aveuglément les anciennes instructions YAML du README historique.
+Les tests hôtes couvrent les 36 transitions, l'ordre de commutation, les modes exclusifs, les commandes OFF périmées, les erreurs GPIO simulées et le convertisseur. Les imports Zigbee2MQTT sont simulés; les variantes CJS/ESM sont comparées.
 
-Pour l'appairage, activer l'autorisation d'appairage du coordinateur et démarrer la carte. Le modèle du firmware et celui du convertisseur correspondent : `ESP-C6-UNIT01`. La découverte MQTT de Home Assistant doit être configurée côté Zigbee2MQTT/Home Assistant pour y retrouver les entités.
+Le workflow [Firmware validation](https://github.com/nathanbegin/ESP-C6-UNIT01/actions) teste la logique et compile dans ESP-IDF 5.5.4. Une compilation réussie fournit les binaires en artefact. Vérifier le résultat du commit concerné. Les essais électriques et Zigbee sur la carte ne sont pas remplacés par ces tests.
 
-## Structure
-
-| Fichier | Responsabilité |
-| --- | --- |
-| `main/zb_door_sensors.c` | Démarrage, GPIO, anti-rebond, endpoints, notifications et LED |
-| `main/zb_door_sensors.h` | Broches, rôle Zigbee et identifiants |
-| `main/app_config.c` | Bouton BOOT, NVS, point d'accès et serveur HTTP |
-| `main/app_config.h` | Paramètres du portail et du bouton |
-| `c6_door_sensor.js` | Traduction Zigbee2MQTT des contacts et de la LED |
-| `sdkconfig`, `sdkconfig.defaults` | Configuration ESP-IDF complète et valeurs de base |
-| `partitions.csv` | Organisation de la mémoire flash |
-| `dependencies.lock` | Versions des composants de l'archive |
-| `docs/ANALYSE.md` | Résultats de la revue et limites |
-
-Les dossiers `build/` et `managed_components/` sont exclus : ils contiennent les résultats de compilation et les dépendances récupérables. `sdkconfig.old` n'est pas importé. Aucune licence de redistribution nouvelle n'a été ajoutée.
-
-## Dépôt GitHub
-
-[nathanbegin/ESP-C6-UNIT01](https://github.com/nathanbegin/ESP-C6-UNIT01)
+`build/` et `managed_components/` sont exclus. L'import initial provient de `ESP-C6-UNIT01_2026-09-14.zip`; [l'analyse d'origine](docs/ANALYSE.md) et [l'ancien README](docs/README-original.md) sont conservés à titre historique.

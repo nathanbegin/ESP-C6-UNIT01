@@ -1,5 +1,10 @@
 # Cible
 CONFIG_IDF_TARGET="esp32c6"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# Module relais : vérifier la polarité et les délais du matériel.
+CONFIG_APP_RELAY_ACTIVE_LOW=y
+CONFIG_APP_RELAY_SETTLE_MS=30
 
 # Table de partitions personnalisée
 CONFIG_PARTITION_TABLE_CUSTOM=y

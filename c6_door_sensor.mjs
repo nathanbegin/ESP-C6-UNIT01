@@ -1,4 +1,4 @@
-const exposes = require('zigbee-herdsman-converters/lib/exposes');
+import * as exposes from 'zigbee-herdsman-converters/lib/exposes';
 const e = exposes.presets;
 
 const endpoints = {led: 1, door1: 2, door2: 3, door3: 4, fan1: 5, fan2: 6, exchange: 7};
@@ -50,7 +50,7 @@ const switchCommands = {
     },
 };
 
-module.exports = {
+export default {
     zigbeeModel: ['ESP-C6-UNIT01'],
     model: 'ESP-C6-UNIT01',
     vendor: 'NathanSensors',

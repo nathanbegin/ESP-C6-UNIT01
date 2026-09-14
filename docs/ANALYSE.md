@@ -1,4 +1,6 @@
-# Analyse du firmware ESP-C6-UNIT01
+# Analyse historique du firmware ESP-C6-UNIT01 importé
+
+Cette analyse décrit la version initiale `6e2bedb`, avant l’ajout des relais. La version actuelle corrige la synchronisation initiale, les états absents dans le convertisseur et le réglage de flash dans les defaults. Voir le README et [RELAIS.md](RELAIS.md) pour le fonctionnement actuel.
 
 Analyse statique du 14 septembre 2026. Sources : fichiers contenus dans l'archive fournie. Les fichiers de programme et de configuration ont été conservés octet pour octet. Les constats ne prouvent pas que le firmware actuellement flashé sur la carte est identique à ces sources.
 
