@@ -15,6 +15,7 @@
 #include <stdatomic.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "esp_check.h"
 #include "esp_system.h"
@@ -36,6 +37,22 @@ static atomic_uint s_sync_generation;
 
 /* ---------- LED embarquée ---------- */
 static led_strip_handle_t s_led;
+static QueueHandle_t s_led_queue;
+static atomic_bool s_led_applied;
+
+#define LED_APPLY_RETRIES       3
+#define LED_RETRY_DELAY_MS      5
+
+static esp_err_t led_apply(bool on)
+{
+    esp_err_t err;
+    if (on) {
+        err = led_strip_set_pixel(s_led, 0, 24, 24, 24); /* blanc doux */
+        if (err != ESP_OK) return err;
+        return led_strip_refresh(s_led);
+    }
+    return led_strip_clear(s_led);
+}
 
 static void led_init(void)
 {
@@ -48,17 +65,11 @@ static void led_init(void)
         .resolution_hz = 10 * 1000 * 1000, /* 10 MHz */
     };
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &s_led));
-    led_strip_clear(s_led);
-}
+    ESP_ERROR_CHECK(led_apply(false));
+    atomic_store(&s_led_applied, false);
 
-static void led_set(bool on)
-{
-    if (on) {
-        led_strip_set_pixel(s_led, 0, 24, 24, 24); /* blanc doux */
-        led_strip_refresh(s_led);
-    } else {
-        led_strip_clear(s_led);
-    }
+    s_led_queue = xQueueCreate(1, sizeof(bool));
+    if (!s_led_queue) ESP_ERROR_CHECK(ESP_ERR_NO_MEM);
 }
 
 /* ---------- Read-only Zigbee state publication ---------- */
@@ -74,6 +85,71 @@ static void report_on_off_locked(uint8_t endpoint)
     cmd.direction = ESP_ZB_ZCL_CMD_DIRECTION_TO_CLI;
     esp_err_t err = esp_zb_zcl_report_attr_cmd_req(&cmd);
     if (err != ESP_OK) ESP_LOGW(TAG, "Rapport EP%u: %s", endpoint, esp_err_to_name(err));
+}
+
+static void led_publish_state(bool on)
+{
+    if (!atomic_load(&s_zb_ready)) return;
+
+    esp_zb_lock_acquire(portMAX_DELAY);
+    if (atomic_load(&s_zb_ready)) {
+        esp_zb_zcl_status_t status = esp_zb_zcl_set_attribute_val(
+            HA_LED_ENDPOINT, ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+            ESP_ZB_ZCL_CLUSTER_SERVER_ROLE, ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
+            &on, false);
+        if (status == ESP_ZB_ZCL_STATUS_SUCCESS) {
+            report_on_off_locked(HA_LED_ENDPOINT);
+        } else {
+            ESP_LOGW(TAG, "Attribut LED: statut %u", (unsigned)status);
+        }
+    }
+    esp_zb_lock_release();
+}
+
+static void led_task(void *arg)
+{
+    (void)arg;
+    bool on;
+
+    for (;;) {
+        if (xQueueReceive(s_led_queue, &on, portMAX_DELAY) != pdTRUE) continue;
+
+        esp_err_t err = ESP_FAIL;
+        for (unsigned attempt = 1; attempt <= LED_APPLY_RETRIES; ++attempt) {
+            err = led_apply(on);
+            if (err == ESP_OK) break;
+
+            ESP_LOGW(TAG, "LED %s: tentative %u/%u échouée (%s)",
+                     on ? "ON" : "OFF", attempt, LED_APPLY_RETRIES,
+                     esp_err_to_name(err));
+            vTaskDelay(pdMS_TO_TICKS(LED_RETRY_DELAY_MS));
+        }
+
+        if (err == ESP_OK) {
+            atomic_store(&s_led_applied, on);
+            ESP_LOGI(TAG, "LED appliquée -> %s", on ? "ON" : "OFF");
+            led_publish_state(on);
+        } else {
+            bool applied = atomic_load(&s_led_applied);
+            ESP_LOGE(TAG, "LED %s impossible après %u tentatives; état conservé=%s",
+                     on ? "ON" : "OFF", LED_APPLY_RETRIES,
+                     applied ? "ON" : "OFF");
+            led_publish_state(applied);
+        }
+    }
+}
+
+static esp_err_t led_start(void)
+{
+    return xTaskCreate(led_task, "led_task", 3072, NULL, 5, NULL) == pdPASS
+               ? ESP_OK
+               : ESP_ERR_NO_MEM;
+}
+
+static esp_err_t led_request(bool on)
+{
+    if (!s_led_queue) return ESP_ERR_INVALID_STATE;
+    return xQueueOverwrite(s_led_queue, &on) == pdPASS ? ESP_OK : ESP_FAIL;
 }
 
 /* Called by the relay task AFTER the physical switching sequence. */
@@ -208,7 +284,7 @@ static void doors_gpio_init(void)
     }
 }
 
-/* Incoming On/Off writes only enqueue work: no relay delay in the Zigbee task. */
+/* Incoming On/Off writes only enqueue work: no relay/RMT delay in the Zigbee task. */
 static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t cb_id, const void *message)
 {
     if (cb_id != ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID) return ESP_OK;
@@ -224,10 +300,8 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t cb_id, const
              m->info.dst_endpoint, on ? "ON" : "OFF");
     switch (m->info.dst_endpoint) {
     case HA_LED_ENDPOINT:
-        ESP_LOGI(TAG, "LED -> %s", on ? "ON" : "OFF");
-        led_set(on);
-        report_on_off_locked(HA_LED_ENDPOINT);
-        return ESP_OK;
+        ESP_LOGI(TAG, "LED demandée -> %s", on ? "ON" : "OFF");
+        return led_request(on);
     case HA_FAN1_ENDPOINT:
         return fan_control_set_switch(FAN_SWITCH_LOW, on);
     case HA_FAN2_ENDPOINT:
@@ -352,6 +426,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
                 atomic_store(&s_zb_ready, true);
                 atomic_fetch_add(&s_sync_generation, 1);
                 fan_control_request_report();
+                led_request(atomic_load(&s_led_applied));
             }
         } else {
             ESP_LOGW(TAG, "Échec init (%s), nouvel essai...",
@@ -365,6 +440,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct)
             atomic_store(&s_zb_ready, true);
             atomic_fetch_add(&s_sync_generation, 1);
             fan_control_request_report();
+            led_request(atomic_load(&s_led_applied));
             esp_zb_ieee_addr_t ext_pan;
             esp_zb_get_extended_pan_id(ext_pan);
             ESP_LOGI(TAG, "Rejoint le réseau. Canal: %d",
@@ -433,7 +509,7 @@ void app_main(void)
 
     /* --- Mode NORMAL : Zigbee --- */
     led_init();
-    led_set(false);
+    ESP_ERROR_CHECK(led_start());
     doors_gpio_init();
     ESP_ERROR_CHECK(fan_control_start(fan_state_report));
 
