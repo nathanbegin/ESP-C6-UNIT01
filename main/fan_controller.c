@@ -4,18 +4,19 @@
 
 uint8_t fan_relay_mask(fan_state_t state)
 {
-    /* P1=000, P2=110, P3=111 in K1,K2,K3 order; K4 is independent. */
-    return (state.mode == FAN_OFF ? 0u : 3u) |
-           (state.mode == FAN_HIGH ? 4u : 0u) |
-           (state.exchange ? 8u : 0u);
+    uint8_t mask = 0;
+    if (state.mode == FAN_LOW) mask |= 1u;       /* K1 */
+    if (state.mode == FAN_HIGH) mask |= 2u;      /* K2 */
+    if (state.mode == FAN_HIGH && state.exchange) mask |= 4u; /* K3 */
+    return mask;
 }
 
 static bool release_all(fan_controller_t *fan)
 {
     bool ok = true;
-    /* Open exchange first. Attempt every output even if one write fails. */
-    const unsigned order[] = {3, 0, 1, 2};
-    for (unsigned i = 0; i < 4; ++i) {
+    /* Ouvrir d'abord l'échange, puis les deux branches de vitesse. */
+    const unsigned order[] = {2, 0, 1};
+    for (unsigned i = 0; i < 3; ++i) {
         if (!fan->io.write_relay(fan->io.context, order[i], false)) ok = false;
     }
     fan->healthy = ok;
@@ -35,27 +36,46 @@ bool fan_controller_apply(fan_controller_t *fan, fan_state_t target)
     if (!fan || !fan->healthy || target.mode < FAN_OFF || target.mode > FAN_HIGH) {
         return false;
     }
+    /* L'échange extérieur n'est permis qu'en haute vitesse. */
+    if (target.exchange && target.mode != FAN_HIGH) return false;
+
     if (target.mode == fan->state.mode && target.exchange == fan->state.exchange) {
         return true;
     }
 
-    if (target.mode != fan->state.mode) {
-        /* Open the bypass before changing the selected resistance. */
-        if (!fan->io.write_relay(fan->io.context, 3, false)) goto failed;
-        fan->io.settle(fan->io.context);
-        /* P1 is the transition position. Isolate K3 before moving it. */
-        if (!fan->io.write_relay(fan->io.context, 0, false)) goto failed;
-        if (!fan->io.write_relay(fan->io.context, 1, false)) goto failed;
-        fan->io.settle(fan->io.context);
-        if (!fan->io.write_relay(fan->io.context, 2, target.mode == FAN_HIGH)) goto failed;
-        fan->io.settle(fan->io.context);
-        if (!fan->io.write_relay(fan->io.context, 1, target.mode != FAN_OFF)) goto failed;
-        fan->io.settle(fan->io.context);
-        if (!fan->io.write_relay(fan->io.context, 0, target.mode != FAN_OFF)) goto failed;
+    const bool mode_changed = target.mode != fan->state.mode;
+
+    /* Break-before-make : retirer le bypass avant tout changement de vitesse. */
+    if (fan->state.exchange && (!target.exchange || mode_changed)) {
+        if (!fan->io.write_relay(fan->io.context, 2, false)) goto failed;
         fan->io.settle(fan->io.context);
     }
-    if (!fan->io.write_relay(fan->io.context, 3, target.exchange)) goto failed;
-    fan->io.settle(fan->io.context);
+
+    if (mode_changed) {
+        /* Ouvrir la branche actuellement sélectionnée avant d'en fermer une autre. */
+        if (fan->state.mode == FAN_LOW) {
+            if (!fan->io.write_relay(fan->io.context, 0, false)) goto failed;
+            fan->io.settle(fan->io.context);
+        } else if (fan->state.mode == FAN_HIGH) {
+            if (!fan->io.write_relay(fan->io.context, 1, false)) goto failed;
+            fan->io.settle(fan->io.context);
+        }
+
+        if (target.mode == FAN_LOW) {
+            if (!fan->io.write_relay(fan->io.context, 0, true)) goto failed;
+            fan->io.settle(fan->io.context);
+        } else if (target.mode == FAN_HIGH) {
+            if (!fan->io.write_relay(fan->io.context, 1, true)) goto failed;
+            fan->io.settle(fan->io.context);
+        }
+    }
+
+    /* Le bypass ne peut être fermé qu'après sélection de Fan High. */
+    if (target.exchange && !fan->state.exchange) {
+        if (!fan->io.write_relay(fan->io.context, 2, true)) goto failed;
+        fan->io.settle(fan->io.context);
+    }
+
     fan->state = target;
     return true;
 
@@ -68,20 +88,40 @@ bool fan_controller_switch(fan_controller_t *fan, fan_switch_t control, bool on)
 {
     if (!fan) return false;
     fan_state_t target = fan->state;
+
     switch (control) {
     case FAN_SWITCH_LOW:
-        if (on) target.mode = FAN_LOW;
-        else if (target.mode == FAN_LOW) target.mode = FAN_OFF;
+        if (on) {
+            target.mode = FAN_LOW;
+            target.exchange = false;
+        } else if (target.mode == FAN_LOW) {
+            target.mode = FAN_OFF;
+            target.exchange = false;
+        }
         break;
+
     case FAN_SWITCH_HIGH:
-        if (on) target.mode = FAN_HIGH;
-        else if (target.mode == FAN_HIGH) target.mode = FAN_OFF;
+        if (on) {
+            target.mode = FAN_HIGH;
+        } else if (target.mode == FAN_HIGH) {
+            target.mode = FAN_OFF;
+            target.exchange = false;
+        }
         break;
+
     case FAN_SWITCH_EXCHANGE:
-        target.exchange = on;
+        if (on) {
+            /* La machine échange uniquement en haute vitesse. */
+            target.mode = FAN_HIGH;
+            target.exchange = true;
+        } else {
+            target.exchange = false;
+        }
         break;
+
     default:
         return false;
     }
+
     return fan_controller_apply(fan, target);
 }
