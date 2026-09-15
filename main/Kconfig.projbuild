@@ -14,7 +14,8 @@ config APP_RELAY_SETTLE_MS
     default 30
     help
         Must exceed the module's relay operate/release/bounce times.
-        Low (K1), High (K2) and Exchange (K3) are mutually exclusive.
-        Every change opens the active contact before another one is closed.
+        K1 Low (10 kOhm), K2 High (4 kOhm), K3 Exchange (~0 Ohm)
+        and K4 Off (21 kOhm) are mutually exclusive. Every change opens
+        the active contact before another one is closed.
 
 endmenu
