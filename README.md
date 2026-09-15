@@ -1,18 +1,24 @@
 # ESP-C6-UNIT01
 
-Firmware ESP-IDF pour ESP32-C6 : trois contacts de porte, une LED et une commande de ventilation par quatre relais. Fabricant Zigbee : `NathanSensors`; modèle : `ESP-C6-UNIT01`.
+Firmware ESP-IDF pour ESP32-C6 : trois contacts de porte, une LED WS2812 et une commande de ventilation par **trois relais SPST**. Fabricant Zigbee : `NathanSensors`; modèle : `ESP-C6-UNIT01`.
 
-## Trois commandes de ventilation
+## Commandes de ventilation
 
-| Interrupteur | ON | OFF |
+Le circuit de commande entre **J13 et J14** est reproduit directement plutôt que de répliquer mécaniquement l'ancien sélecteur 2P3T :
+
+- **Fan 1 / Low** : branche 21 kΩ;
+- **Fan 2 / High** : branche 4 kΩ;
+- **Échange extérieur** : liaison directe J13-J14, autorisée uniquement en Fan High.
+
+| Commande Zigbee | ON | OFF |
 | --- | --- | --- |
-| **Fan 1** | Position 2, basse vitesse; désactive Fan 2 | Passe sur Off si Fan 1 est actif |
-| **Fan 2** | Position 3, haute vitesse; désactive Fan 1 | Passe sur Off si Fan 2 est actif |
-| **Échange extérieur** | Ferme SW2 avec K4 | Ouvre SW2 avec K4 |
+| **Fan 1** | sélectionne Low; coupe Fan 2 et l'échange | passe sur Off si Fan 1 est actif |
+| **Fan 2** | sélectionne High; coupe Fan 1 | passe sur Off si Fan 2 est actif; coupe aussi l'échange |
+| **Échange extérieur** | force d'abord Fan High puis active l'échange | désactive l'échange mais conserve Fan High |
 
-**Off = Fan 1 et Fan 2 désactivés**, position 1 du sélecteur. Éteindre une vitesse déjà inactive ne coupe pas l'autre vitesse. La demande d'échange est indépendante et conservée pendant les changements de mode, y compris Off; selon le schéma fourni, elle n'a pas d'effet électrique en position 1.
+Les états physiques permis sont donc seulement : **Off**, **Low**, **High**, **High + Exchange**. Le firmware interdit Low+High simultané et interdit l'échange sans High.
 
-Les relais K1..K4 n'ont aucun endpoint individuel. La LED et les trois contacts existants sont conservés.
+Les relais n'ont aucun endpoint individuel; les endpoints exposent les fonctions logiques. La LED et les trois contacts existants sont conservés.
 
 | Endpoint | Fonction | GPIO / propriété Zigbee2MQTT |
 | --- | --- | --- |
@@ -26,53 +32,73 @@ Les relais K1..K4 n'ont aucun endpoint individuel. La LED et les trois contacts 
 
 Les contacts valent `true` pour fermé, `false` pour ouvert. Les interrupteurs utilisent `ON` / `OFF`; les commandes On, Off et Toggle sont acceptées.
 
-## Raccordement et paramètres
+## Relais, GPIO et câblage
 
-| GPIO ESP32-C6 | Module relais |
-| --- | --- |
-| 6 | IN1 / K1 |
-| 7 | IN2 / K2 |
-| 10 | IN3 / K3 |
-| 11 | IN4 / K4 |
+| Relais | GPIO ESP32-C6 | Module relais | Fonction |
+| --- | ---: | --- | --- |
+| **K1** | **6** | IN1 | Fan Low / branche 21 kΩ |
+| **K2** | **7** | IN2 | Fan High / branche 4 kΩ |
+| **K3** | **10** | IN3 | Échange extérieur / liaison directe J13-J14 |
 
-Utiliser quatre relais **SPDT à contacts secs COM/NC/NO**, selon [docs/RELAIS.md](docs/RELAIS.md). Les broches supposent une DevKitC avec ces GPIO accessibles. Les entrées du module doivent être compatibles 3,3 V; une bobine seule ne se branche pas directement à un GPIO. L'alimentation du module et sa masse logique suivent son schéma réel. Les contacts du circuit commandé restent isolés des GPIO et de la masse ESP32.
+**GPIO11 est maintenant libre.** Si un module à quatre relais est utilisé, IN4/K4 n'est pas utilisé par la ventilation.
+
+Utiliser des relais **SPST normalement ouverts à contacts secs**. Un relais SPDT peut aussi convenir en n'utilisant que COM et NO, mais le contact NC n'est pas requis. Voir [docs/RELAIS.md](docs/RELAIS.md) pour le schéma logique, la table d'états et la procédure de validation.
+
+Les entrées du module doivent être compatibles 3,3 V; une bobine seule ne se branche pas directement à un GPIO. J13/J14 et les résistances du circuit commandé restent isolés des GPIO et de la masse ESP32.
 
 Dans `idf.py menuconfig` > **ESP-C6-UNIT01 relay control** :
 
 - `APP_RELAY_ACTIVE_LOW` : **activé par défaut**. LOW active une bobine; désactiver pour un module actif HIGH.
 - `APP_RELAY_SETTLE_MS` : **30 ms par étape**, à adapter aux temps de commutation et de rebond du module.
 
-Les quatre bobines sont relâchées avant de démarrer Zigbee ou Wi-Fi : Off, échange désactivé. Les modes ne sont pas restaurés après une coupure. Le driver matériel doit imposer le bon état pendant le reset, avant l'exécution du firmware.
+Les trois bobines sont relâchées avant de démarrer Zigbee ou Wi-Fi : Off, échange désactivé. Les modes ne sont pas restaurés après une coupure. Le matériel doit imposer un état sûr pendant le reset, avant l'exécution du firmware.
 
-Les transitions de vitesse ouvrent K4, passent par la position 1, isolent K3 avant de le commuter, sélectionnent la vitesse puis rétablissent la demande d'échange. Les délais se déroulent dans une tâche dédiée. Les rapports décrivent l'état commandé des sorties : il n'y a pas de retour de position mécanique des relais.
+Les changements de vitesse sont **break-before-make** : le firmware ouvre d'abord l'échange, ouvre la vitesse actuelle, ferme la nouvelle vitesse, puis ne referme l'échange qu'une fois Fan High réellement sélectionné. Les délais se déroulent dans une tâche dédiée. Les rapports décrivent l'état commandé des sorties; il n'y a pas de retour mécanique des contacts relais.
+
+## Table d'états des relais
+
+| État | K1 Low | K2 High | K3 Exchange |
+| --- | ---: | ---: | ---: |
+| Off | 0 | 0 | 0 |
+| Fan Low | 1 | 0 | 0 |
+| Fan High | 0 | 1 | 0 |
+| Fan High + échange | 0 | 1 | 1 |
+
+`Exchange ON` depuis Off ou Low force automatiquement **Fan High + échange**. `Fan Low ON` pendant un échange coupe d'abord K3 avant de quitter High.
 
 ## Mise à jour d'un appareil appairé
 
-1. Vérifier le câblage, la polarité des entrées et les délais du module.
+1. Vérifier le câblage K1/K2/K3, la polarité des entrées et les délais du module.
 2. Compiler et flasher le firmware.
 3. Remplacer le convertisseur externe dans Zigbee2MQTT par **un seul** fichier : `c6_door_sensor.mjs` (ESM, installations actuelles) ou `c6_door_sensor.js` (CommonJS, installations compatibles). Retirer l'ancien convertisseur actif pour ce modèle.
-4. Refaire l'interview pour découvrir les endpoints 5, 6 et 7. Si nécessaire, retirer puis réappairer; vérifier ensuite les automatisations existantes.
-5. Tester les états des contacts relais avec le circuit commandé déconnecté, puis vérifier le comportement réel.
+4. Refaire l'interview si nécessaire pour les endpoints 5, 6 et 7; vérifier ensuite les automatisations existantes.
+5. Tester les contacts relais avec J13/J14 déconnectés de la machine, puis valider au multimètre les états décrits dans `docs/RELAIS.md` avant raccordement réel.
 
 La [documentation Zigbee2MQTT](https://www.zigbee2mqtt.io/advanced/more/external_converters.html) indique le dossier `external_converters` à côté de `configuration.yaml`, une gestion depuis la console de développement, et `enable_external_js` pour les nouvelles installations à partir de 2.11.0. Ne pas charger les deux variantes simultanément.
 
 Le convertisseur lit les états pendant sa configuration. Le firmware publie après les commandes, après la connexion au réseau et toutes les 30 secondes. Un message IAS sans statut valide ne modifie plus le contact.
 
-Messages vers `zigbee2mqtt/NOM_APPAREIL/set` :
+Exemples vers `zigbee2mqtt/NOM_APPAREIL/set` :
 
 ```json
 {"state_fan1":"ON"}
 ```
 
 ```json
-{"state_fan2":"ON","state_exchange":"ON"}
+{"state_fan2":"ON"}
 ```
 
-Pour arrêter quelle que soit la vitesse :
+L'échange peut être demandé directement; le firmware force alors High avant K3 :
 
 ```json
-{"state_fan1":"OFF","state_fan2":"OFF"}
+{"state_exchange":"ON"}
 ```
+
+Pour arrêter la vitesse active, envoyer OFF sur l'endpoint correspondant. Si Fan High est actif avec échange, `state_fan2: OFF` coupe aussi l'échange.
+
+## LED WS2812
+
+La LED embarquée est une WS2812 sur **GPIO8**. La transmission RMT est exécutée dans une tâche FreeRTOS dédiée afin de ne pas bloquer le callback Zigbee. Le firmware vérifie les retours `led_strip`, réessaie jusqu'à trois fois lors d'une erreur de transmission et ne republie l'état Zigbee qu'après application physique réussie. La dernière valeur appliquée est resynchronisée après une reconnexion Zigbee.
 
 ## Portes et portail Wi-Fi
 
@@ -98,7 +124,7 @@ Adapter le port. Le `sdkconfig` complet reste versionné; les defaults imposent 
 
 ## Fonctions internes et tests
 
-`fan_set_mode(FAN_OFF / FAN_LOW / FAN_HIGH)` et `outdoor_exchange_set(bool)` déposent une requête dans la file de la tâche des relais. `ESP_OK` signifie que la requête est acceptée, pas déjà exécutée. `fan_control_set_switch()` traduit les interrupteurs en modes exclusifs.
+`fan_set_mode(FAN_OFF / FAN_LOW / FAN_HIGH)` et `outdoor_exchange_set(bool)` déposent une requête dans la file de la tâche des relais. `ESP_OK` signifie que la requête est acceptée, pas déjà exécutée. `fan_control_set_switch()` traduit les interrupteurs en états sûrs et applique l'interverrouillage High/Exchange.
 
 La logique indépendante du matériel est dans `main/fan_controller.c`; son adaptation GPIO/FreeRTOS est dans `main/fan_control.c`.
 
@@ -106,19 +132,18 @@ La logique indépendante du matériel est dans `main/fan_controller.c`; son adap
 bash tests/run.sh
 ```
 
-Les tests hôtes couvrent les 36 transitions, l'ordre de commutation, les modes exclusifs, les commandes OFF périmées, les erreurs GPIO simulées et le convertisseur. Les imports Zigbee2MQTT sont simulés; les variantes CJS/ESM sont comparées.
+Les tests hôtes couvrent les **16 transitions entre les quatre états sûrs**, l'ordre break-before-make, l'exclusivité Low/High, l'interverrouillage High/Exchange, les commandes OFF périmées, les erreurs GPIO simulées et le convertisseur. Les imports Zigbee2MQTT sont simulés; les variantes CJS/ESM sont comparées.
 
-Le moniteur série à 115200 bauds trace chaque commande reçue, son acceptation dans la file, l'état avant/après et chaque bobine commandée avec son GPIO et son niveau électrique. Par exemple :
+Le moniteur série à 115200 bauds trace chaque commande reçue, son acceptation dans la file, l'état avant/après et chaque bobine commandée avec son GPIO et son niveau électrique. Exemple Low :
 
 ```text
 I (...) ZB_DOOR: Commande On/Off reçue: endpoint=5, valeur=ON
 I (...) FAN: Commande Zigbee acceptée: FAN 1 / BASSE -> ON
 I (...) FAN: K1 GPIO6 -> bobine ACTIVEE (niveau=LOW)
-I (...) FAN: K2 GPIO7 -> bobine ACTIVEE (niveau=LOW)
-I (...) FAN: Etat applique: mode=FAN 1 / BASSE, échange=OFF, K1=1 K2=1 K3=0 K4=0
+I (...) FAN: Etat applique: mode=FAN 1 / BASSE, échange=OFF, K1(low)=1 K2(high)=0 K3(exchange)=0
 ```
 
-Ces traces confirment les niveaux demandés aux GPIO. Elles ne constituent pas un retour mécanique des contacts du relais.
+Pour `Exchange ON` depuis Off, K2 est activé avant K3. Ces traces confirment les niveaux demandés aux GPIO; elles ne constituent pas un retour mécanique des contacts du relais.
 
 Le workflow [Firmware validation](https://github.com/nathanbegin/ESP-C6-UNIT01/actions) teste la logique et compile dans ESP-IDF 5.5.4. Une compilation réussie fournit les binaires en artefact. Vérifier le résultat du commit concerné. Les essais électriques et Zigbee sur la carte ne sont pas remplacés par ces tests.
 
