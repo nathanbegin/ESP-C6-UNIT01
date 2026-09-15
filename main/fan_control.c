@@ -9,8 +9,10 @@
 #include "freertos/queue.h"
 
 static const char *TAG = "FAN";
-static const gpio_num_t pins[] = {
-    FAN_RELAY1_GPIO, FAN_RELAY2_GPIO, FAN_RELAY3_GPIO, FAN_RELAY4_GPIO,
+static const gpio_num_t pins[FAN_RELAY_COUNT] = {
+    FAN_RELAY_LOW_GPIO,
+    FAN_RELAY_HIGH_GPIO,
+    FAN_RELAY_EXCHANGE_GPIO,
 };
 static fan_controller_t controller;
 static QueueHandle_t commands;
@@ -40,9 +42,9 @@ static const char *control_name(fan_switch_t control)
 static void log_state(const char *prefix, fan_state_t state)
 {
     uint8_t mask = fan_relay_mask(state);
-    ESP_LOGI(TAG, "%s: mode=%s, échange=%s, K1=%u K2=%u K3=%u K4=%u",
+    ESP_LOGI(TAG, "%s: mode=%s, échange=%s, K1(low)=%u K2(high)=%u K3(exchange)=%u",
              prefix, mode_name(state.mode), state.exchange ? "ON" : "OFF",
-             !!(mask & 1), !!(mask & 2), !!(mask & 4), !!(mask & 8));
+             !!(mask & 1), !!(mask & 2), !!(mask & 4));
 }
 
 typedef struct {
@@ -55,6 +57,10 @@ typedef struct {
 static bool write_relay(void *context, unsigned relay, bool energized)
 {
     (void)context;
+    if (relay >= FAN_RELAY_COUNT) {
+        ESP_LOGE(TAG, "Index relais invalide: %u", relay);
+        return false;
+    }
 #ifdef CONFIG_APP_RELAY_ACTIVE_LOW
     const int level = !energized;
 #else
@@ -86,8 +92,8 @@ esp_err_t fan_control_init(void)
     ESP_LOGI(TAG, "Initialisation relais: entrées actives HIGH, délai=%d ms",
              CONFIG_APP_RELAY_SETTLE_MS);
 #endif
-    /* Preload the inactive output latch before enabling each output. */
-    for (unsigned i = 0; i < 4; ++i) {
+    /* Précharger l'état relâché avant d'activer chaque GPIO en sortie. */
+    for (unsigned i = 0; i < FAN_RELAY_COUNT; ++i) {
         if (!write_relay(NULL, i, false)) return ESP_FAIL;
         gpio_config_t cfg = {
             .pin_bit_mask = 1ULL << pins[i],
@@ -125,6 +131,8 @@ static void fan_task(void *arg)
             if (command.set_mode) {
                 fan_state_t target = controller.state;
                 target.mode = command.mode;
+                /* Toute sortie de Fan High annule obligatoirement l'échange. */
+                if (target.mode != FAN_HIGH) target.exchange = false;
                 ok = fan_controller_apply(&controller, target);
             } else {
                 ok = fan_controller_switch(&controller, command.control, command.on);
