@@ -220,8 +220,11 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t cb_id, const
         m->attribute.id != ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID ||
         m->attribute.data.type != ESP_ZB_ZCL_ATTR_TYPE_BOOL) return ESP_OK;
     bool on = *(bool *)m->attribute.data.value;
+    ESP_LOGI(TAG, "Commande On/Off reçue: endpoint=%u, valeur=%s",
+             m->info.dst_endpoint, on ? "ON" : "OFF");
     switch (m->info.dst_endpoint) {
     case HA_LED_ENDPOINT:
+        ESP_LOGI(TAG, "LED -> %s", on ? "ON" : "OFF");
         led_set(on);
         report_on_off_locked(HA_LED_ENDPOINT);
         return ESP_OK;

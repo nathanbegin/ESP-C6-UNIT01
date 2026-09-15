@@ -17,6 +17,34 @@ static QueueHandle_t commands;
 static fan_state_callback_t state_callback;
 static atomic_bool report_requested;
 
+static const char *mode_name(fan_mode_t mode)
+{
+    switch (mode) {
+    case FAN_OFF:  return "OFF";
+    case FAN_LOW:  return "FAN 1 / BASSE";
+    case FAN_HIGH: return "FAN 2 / HAUTE";
+    default:       return "INCONNU";
+    }
+}
+
+static const char *control_name(fan_switch_t control)
+{
+    switch (control) {
+    case FAN_SWITCH_LOW:      return "FAN 1 / BASSE";
+    case FAN_SWITCH_HIGH:     return "FAN 2 / HAUTE";
+    case FAN_SWITCH_EXCHANGE: return "ECHANGE EXTERIEUR";
+    default:                  return "INCONNU";
+    }
+}
+
+static void log_state(const char *prefix, fan_state_t state)
+{
+    uint8_t mask = fan_relay_mask(state);
+    ESP_LOGI(TAG, "%s: mode=%s, échange=%s, K1=%u K2=%u K3=%u K4=%u",
+             prefix, mode_name(state.mode), state.exchange ? "ON" : "OFF",
+             !!(mask & 1), !!(mask & 2), !!(mask & 4), !!(mask & 8));
+}
+
 typedef struct {
     bool set_mode;
     fan_mode_t mode;
@@ -33,7 +61,13 @@ static bool write_relay(void *context, unsigned relay, bool energized)
     const int level = energized;
 #endif
     esp_err_t err = gpio_set_level(pins[relay], level);
-    if (err != ESP_OK) ESP_LOGE(TAG, "K%u: %s", relay + 1, esp_err_to_name(err));
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "K%u GPIO%d -> bobine %s (niveau=%s)", relay + 1,
+                 pins[relay], energized ? "ACTIVEE" : "RELACHEE",
+                 level ? "HIGH" : "LOW");
+    } else {
+        ESP_LOGE(TAG, "K%u GPIO%d: %s", relay + 1, pins[relay], esp_err_to_name(err));
+    }
     return err == ESP_OK;
 }
 
@@ -45,6 +79,13 @@ static void settle(void *context)
 
 esp_err_t fan_control_init(void)
 {
+#ifdef CONFIG_APP_RELAY_ACTIVE_LOW
+    ESP_LOGI(TAG, "Initialisation relais: entrées actives LOW, délai=%d ms",
+             CONFIG_APP_RELAY_SETTLE_MS);
+#else
+    ESP_LOGI(TAG, "Initialisation relais: entrées actives HIGH, délai=%d ms",
+             CONFIG_APP_RELAY_SETTLE_MS);
+#endif
     /* Preload the inactive output latch before enabling each output. */
     for (unsigned i = 0; i < 4; ++i) {
         if (!write_relay(NULL, i, false)) return ESP_FAIL;
@@ -59,7 +100,9 @@ esp_err_t fan_control_init(void)
         if (err != ESP_OK) return err;
     }
     fan_io_t io = {.write_relay = write_relay, .settle = settle};
-    return fan_controller_init(&controller, io) ? ESP_OK : ESP_FAIL;
+    if (!fan_controller_init(&controller, io)) return ESP_FAIL;
+    log_state("Etat initial applique", controller.state);
+    return ESP_OK;
 }
 
 static void fan_task(void *arg)
@@ -71,6 +114,14 @@ static void fan_task(void *arg)
         bool changed = xQueueReceive(commands, &command, pdMS_TO_TICKS(100)) == pdTRUE;
         if (changed) {
             bool ok;
+            fan_state_t before = controller.state;
+            if (command.set_mode) {
+                ESP_LOGI(TAG, "Exécution commande interne: mode %s", mode_name(command.mode));
+            } else {
+                ESP_LOGI(TAG, "Exécution commande Zigbee: %s -> %s",
+                         control_name(command.control), command.on ? "ON" : "OFF");
+            }
+            log_state("Etat avant", before);
             if (command.set_mode) {
                 fan_state_t target = controller.state;
                 target.mode = command.mode;
@@ -78,7 +129,17 @@ static void fan_task(void *arg)
             } else {
                 ok = fan_controller_switch(&controller, command.control, command.on);
             }
-            if (!ok) ESP_LOGE(TAG, "Commande échouée; remise au repos tentée");
+            if (ok) {
+                if (before.mode == controller.state.mode &&
+                    before.exchange == controller.state.exchange) {
+                    ESP_LOGI(TAG, "Commande sans changement physique");
+                }
+                log_state("Etat applique", controller.state);
+            } else {
+                ESP_LOGE(TAG, "Commande échouée; remise au repos tentée");
+                if (controller.healthy) log_state("Etat de récupération", controller.state);
+                else ESP_LOGE(TAG, "Contrôleur relais en défaut; commandes bloquées");
+            }
         }
         TickType_t now = xTaskGetTickCount();
         bool requested = atomic_exchange(&report_requested, false);
@@ -106,10 +167,20 @@ esp_err_t fan_control_start(fan_state_callback_t callback)
 
 static esp_err_t enqueue(fan_command_t command)
 {
-    if (!commands) return ESP_ERR_INVALID_STATE;
+    if (!commands) {
+        ESP_LOGE(TAG, "Commande refusée: contrôleur non démarré");
+        return ESP_ERR_INVALID_STATE;
+    }
     if (xQueueSend(commands, &command, 0) != pdTRUE) {
+        ESP_LOGE(TAG, "Commande refusée: file pleine");
         fan_control_request_report();
         return ESP_ERR_NO_MEM;
+    }
+    if (command.set_mode) {
+        ESP_LOGI(TAG, "Commande interne acceptée: mode %s", mode_name(command.mode));
+    } else {
+        ESP_LOGI(TAG, "Commande Zigbee acceptée: %s -> %s",
+                 control_name(command.control), command.on ? "ON" : "OFF");
     }
     return ESP_OK;
 }
