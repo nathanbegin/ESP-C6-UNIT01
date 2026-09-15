@@ -28,6 +28,9 @@ Les contacts valent `true` pour fermé, `false` pour ouvert. Les interrupteurs u
 
 ## Raccordement et paramètres
 
+<img width="1536" height="1024" alt="5473d712-a4ce-4df6-86d3-064a21f32113" src="https://github.com/user-attachments/assets/98015bfb-0120-482f-81f8-1e02185d40b9" />
+
+
 | GPIO ESP32-C6 | Module relais |
 | --- | --- |
 | 6 | IN1 / K1 |
