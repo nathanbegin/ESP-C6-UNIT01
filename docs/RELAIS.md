@@ -1,13 +1,14 @@
 # Commande J13/J14 avec trois relais SPST
 
-Cette version remplace l'ancienne tentative de reproduire mécaniquement le sélecteur 2P3T. D'après le schéma de commande révisé :
+Le firmware commande directement les trois états électriques utiles entre **J13** et **J14**, sans reproduire mécaniquement l'ancien sélecteur 2P3T.
 
-- **P1 / Fan Low** correspond à la branche **21 kΩ** entre J13 et J14;
-- **P2 / Fan High** correspond à la branche **4 kΩ** entre J13 et J14;
-- **Échange extérieur / humidité** ferme une liaison directe J13-J14;
-- la machine ne doit échanger avec l'extérieur **qu'en Fan High**.
+D'après le schéma et l'interprétation retenue :
 
-Le firmware reproduit donc directement ces trois fonctions avec **trois relais SPST normalement ouverts à contacts secs**.
+- **Fan Low** = branche **21 kΩ** entre J13 et J14;
+- **Fan High** = branche **4 kΩ** entre J13 et J14;
+- **Échange extérieur** = liaison directe J13-J14, donc **proche de 0 Ω**.
+
+Le dernier état n'a pas besoin de conserver la branche 4 kΩ : un contact direct J13-J14 court-circuite électriquement cette résistance. Le firmware commande donc **K3 seul** pour l'échange extérieur.
 
 ## Attribution des relais
 
@@ -17,9 +18,9 @@ Le firmware reproduit donc directement ces trois fonctions avec **trois relais S
 | **K2** | **GPIO7** | Fan High | J13 -> 4 kΩ -> J14 |
 | **K3** | **GPIO10** | Échange extérieur | J13 -> contact direct -> J14 |
 
-**GPIO11 n'est plus utilisé par la ventilation.** Si un module physique à quatre relais est installé, son quatrième canal doit rester inutilisé pour cette fonction.
+**GPIO11 n'est pas utilisé par la ventilation.** Si un module physique à quatre relais est installé, son quatrième canal doit rester inutilisé pour cette fonction.
 
-Les contacts de puissance/commande des relais sont isolés de la logique ESP32. Ne jamais relier J13 ou J14 directement à un GPIO. Les entrées IN/VCC/GND du module relais doivent être câblées selon le module réel et être compatibles avec la logique 3,3 V de l'ESP32-C6.
+Utiliser des contacts secs **SPST normalement ouverts**. Un relais SPDT convient aussi si seuls COM et NO sont utilisés. J13/J14 ne doivent jamais être reliés directement aux GPIO ou à la masse logique de l'ESP32.
 
 ## Schéma logique
 
@@ -32,74 +33,83 @@ J13 ---------- o/ o --------  4 kΩ --------+---- J14
                                            |
                  K3 SPST NO                |
 J13 ---------- o/ o -----------------------+
-                 Échange
+                 Échange extérieur
 ```
 
-Si les résistances 21 kΩ et 4 kΩ existent déjà dans le contrôleur d'origine, les relais doivent commuter les branches correspondantes plutôt que d'ajouter aveuglément de nouvelles résistances. Vérifier le câblage réel hors tension avant raccordement.
+Si les résistances 21 kΩ et 4 kΩ existent déjà dans le contrôleur d'origine, les relais doivent simplement commuter les branches correspondantes. Ne pas ajouter de résistances en parallèle sans avoir vérifié le circuit réel.
 
 ## États permis
 
-`0` = relais relâché/contact ouvert. `1` = relais activé/contact fermé. La polarité électrique de l'entrée du module peut être active LOW; ce tableau décrit seulement l'état mécanique/logique du relais.
+`0` = relais relâché/contact ouvert. `1` = relais activé/contact fermé.
 
-| État logique | K1 Low | K2 High | K3 Exchange | Équivalent J13-J14 |
+| État | K1 Low | K2 High | K3 Exchange | Équivalent J13-J14 |
 | --- | ---: | ---: | ---: | --- |
 | Off | 0 | 0 | 0 | ouvert |
 | Fan Low | 1 | 0 | 0 | 21 kΩ |
 | Fan High | 0 | 1 | 0 | 4 kΩ |
-| Fan High + échange extérieur | 0 | 1 | 1 | proche de 0 Ω, avec la branche 4 kΩ toujours sélectionnée |
+| Échange extérieur | 0 | 0 | 1 | proche de 0 Ω |
 
-Les combinaisons suivantes sont **interdites par le firmware** :
-
-- K1 et K2 fermés simultanément;
-- K3 fermé lorsque K2 n'est pas fermé;
-- échange extérieur en mode Off ou Fan Low.
+Les trois fonctions sont **mutuellement exclusives**. Il ne doit jamais y avoir plus d'un relais fermé à la fois.
 
 ## Logique des commandes Zigbee
 
-Les endpoints restent les mêmes :
+Les endpoints restent :
 
-| Endpoint | Commande | Effet |
+| Endpoint | Commande | Effet physique |
 | ---: | --- | --- |
-| 5 | Fan 1 / Low | sélectionne K1; coupe K2 et K3 |
-| 6 | Fan 2 / High | sélectionne K2; coupe K1 |
-| 7 | Échange extérieur | ON force d'abord Fan High/K2, puis ferme K3 |
+| 5 | Fan 1 / Low | K1 seul |
+| 6 | Fan 2 / High | K2 seul |
+| 7 | Échange extérieur | K3 seul |
 
-Conséquences importantes :
+Conséquences :
 
-- `Exchange ON` depuis Off ou Low passe automatiquement en **Fan High + Exchange**;
-- `Exchange OFF` ouvre K3 mais **conserve Fan High**;
-- `Fan Low ON` pendant un échange ouvre d'abord K3, quitte High, puis ferme K1;
-- `Fan High OFF` lorsqu'il est actif arrête aussi l'échange et passe à Off;
-- une commande OFF visant une vitesse qui n'est pas active ne coupe pas l'autre vitesse.
+- `Fan Low ON` ouvre d'abord tout état actif puis ferme K1;
+- `Fan High ON` ouvre d'abord tout état actif puis ferme K2;
+- `Exchange ON` ouvre d'abord K1 ou K2 s'il y en a un d'actif, puis ferme **K3 seulement**;
+- `Exchange OFF` ouvre K3 et retourne à Off;
+- une commande OFF visant une fonction qui n'est pas active ne modifie pas l'état courant.
+
+Le firmware publie les trois états logiques après la transition. Quand `Exchange` est ON, `Fan Low` et `Fan High` sont tous les deux rapportés OFF.
 
 ## Séquence break-before-make
 
-Le contrôleur applique un délai configurable entre les opérations (`APP_RELAY_SETTLE_MS`, 30 ms par défaut).
+Le délai entre opérations est configurable avec `APP_RELAY_SETTLE_MS` (30 ms par défaut).
 
-Lors d'un changement de mode :
+Pour passer d'un état actif à un autre :
 
-1. si K3 est fermé, ouvrir K3 et attendre;
-2. ouvrir le relais de vitesse actuellement actif et attendre;
-3. fermer le nouveau relais de vitesse et attendre;
-4. si l'état cible demande l'échange, fermer K3 seulement après que K2/Fan High soit actif, puis attendre.
+1. ouvrir le relais actuellement actif;
+2. attendre le délai de stabilisation;
+3. fermer le relais correspondant au nouvel état;
+4. attendre de nouveau.
 
-Cette séquence évite de mettre les branches 21 kΩ et 4 kΩ en parallèle et empêche la liaison directe J13-J14 d'être présente pendant un changement de vitesse.
+Exemples :
+
+```text
+High -> Exchange : K2 OFF -> délai -> K3 ON
+Exchange -> High : K3 OFF -> délai -> K2 ON
+Low -> Exchange  : K1 OFF -> délai -> K3 ON
+```
+
+Cette stratégie évite de mettre momentanément 21 kΩ et 4 kΩ en parallèle et évite également qu'une branche résistive reste fermée en même temps que le court-circuit K3.
 
 ## Démarrage et erreurs
 
-Les trois relais sont commandés au repos avant le démarrage de Zigbee ou du portail Wi-Fi. Le firmware ne restaure pas un ancien mode après une coupure : l'état initial est **Off / échange OFF**.
+Au démarrage, K1, K2 et K3 sont tous relâchés avant le lancement de Zigbee ou du portail Wi-Fi. L'état initial est donc **Off**.
 
-Si une écriture GPIO échoue pendant une transition, le contrôleur tente d'ouvrir K3, K1 et K2. Si cette remise au repos réussit, l'état Off est rapporté. Si elle échoue, le contrôleur se marque en défaut et refuse les nouvelles commandes jusqu'au redémarrage. Il n'existe pas de retour mécanique permettant de détecter un relais physiquement collé.
+Si une écriture GPIO échoue pendant une transition, le contrôleur tente d'ouvrir les trois relais. Si cette remise au repos réussit, Off est rapporté. Sinon, le contrôleur passe en défaut et refuse les nouvelles commandes jusqu'au redémarrage.
+
+Le firmware commande les GPIO mais ne possède aucun retour de position mécanique : un relais physiquement collé ne peut pas être détecté par logiciel.
 
 ## Validation électrique avant raccordement
 
 Avant de connecter J13/J14 à l'échangeur :
 
 1. tester le module relais sans la machine;
-2. vérifier K1/K2/K3 au multimètre en mode continuité/ohmmètre;
-3. confirmer environ 21 kΩ pour Low, 4 kΩ pour High et une liaison proche de 0 Ω uniquement pour High + Exchange;
-4. vérifier qu'aucune transition ne ferme K1 et K2 en même temps;
-5. vérifier que K3 ne ferme jamais sans K2;
-6. confirmer la polarité active LOW/HIGH des entrées du module relais.
+2. confirmer que **K1 = GPIO6**, **K2 = GPIO7**, **K3 = GPIO10**;
+3. vérifier au multimètre environ **21 kΩ** avec K1 seul;
+4. vérifier environ **4 kΩ** avec K2 seul;
+5. vérifier une liaison proche de **0 Ω** avec **K3 seul**;
+6. vérifier qu'un seul relais peut être fermé à la fois, y compris pendant les transitions;
+7. confirmer la polarité active LOW/HIGH du module relais.
 
-Les valeurs ci-dessus proviennent du schéma de commande fourni. Elles doivent être confirmées sur le contrôleur réel, débranché de la machine, avant mise en service.
+Les valeurs 21 kΩ, 4 kΩ et 0 Ω proviennent du schéma de commande interprété. Elles doivent être confirmées sur le contrôleur réel, débranché de la machine, avant mise en service.
