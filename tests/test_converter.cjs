@@ -25,10 +25,19 @@ for (let ep = 2; ep <= 4; ++ep) {
         assert.deepEqual(plain(contacts(null, {endpoint: {ID: ep}, data})), {});
     }
 }
-assert.deepEqual(plain(switches(null, {endpoint: {ID: 5}, data: {onOff: 1}})), {state_fan1: 'ON', state_fan2: 'OFF'});
-assert.deepEqual(plain(switches(null, {endpoint: {ID: 6}, data: {onOff: 1}})), {state_fan2: 'ON', state_fan1: 'OFF'});
-assert.deepEqual(plain(switches(null, {endpoint: {ID: 5}, data: {onOff: 0}})), {state_fan1: 'OFF'});
-assert.deepEqual(plain(switches(null, {endpoint: {ID: 7}, data: {onOff: 1}})), {state_exchange: 'ON'});
+
+assert.deepEqual(plain(switches(null, {endpoint: {ID: 5}, data: {onOff: 1}})),
+    {state_fan1: 'ON', state_fan2: 'OFF', state_exchange: 'OFF'});
+assert.deepEqual(plain(switches(null, {endpoint: {ID: 6}, data: {onOff: 1}})),
+    {state_fan2: 'ON', state_fan1: 'OFF'});
+assert.deepEqual(plain(switches(null, {endpoint: {ID: 6}, data: {onOff: 0}})),
+    {state_fan2: 'OFF', state_exchange: 'OFF'});
+assert.deepEqual(plain(switches(null, {endpoint: {ID: 5}, data: {onOff: 0}})),
+    {state_fan1: 'OFF'});
+assert.deepEqual(plain(switches(null, {endpoint: {ID: 7}, data: {onOff: 1}})),
+    {state_exchange: 'ON', state_fan1: 'OFF', state_fan2: 'ON'});
+assert.deepEqual(plain(switches(null, {endpoint: {ID: 7}, data: {onOff: 0}})),
+    {state_exchange: 'OFF'});
 assert.deepEqual(plain(switches(null, {endpoint: {ID: 7}, data: {}})), {});
 assert.equal(definition.exposes.filter((e) => ['fan1', 'fan2', 'exchange'].includes(e.endpoint)).length, 3);
 
@@ -43,5 +52,5 @@ assert.equal(definition.exposes.filter((e) => ['fan1', 'fan2', 'exchange'].inclu
     await assert.rejects(() => definition.toZigbee[0].convertSet({...entity, ID: 2}, 'state', 'ON'));
     await definition.configure({getEndpoint: (ID) => ({...entity, ID})});
     await assert.rejects(() => definition.configure({getEndpoint: () => undefined}));
-    console.log('PASS: contacts, missing values, exclusive speed reports, non-optimistic commands, configure, CJS/ESM parity');
+    console.log('PASS: contacts, interverrouillage High/Exchange, non-optimistic commands, configure, CJS/ESM parity');
 })().catch((error) => {console.error(error); process.exitCode = 1;});
