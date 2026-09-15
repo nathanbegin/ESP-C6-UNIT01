@@ -13,6 +13,7 @@ static const gpio_num_t pins[FAN_RELAY_COUNT] = {
     FAN_RELAY_LOW_GPIO,
     FAN_RELAY_HIGH_GPIO,
     FAN_RELAY_EXCHANGE_GPIO,
+    FAN_RELAY_OFF_GPIO,
 };
 static fan_controller_t controller;
 static QueueHandle_t commands;
@@ -22,9 +23,9 @@ static atomic_bool report_requested;
 static const char *mode_name(fan_mode_t mode)
 {
     switch (mode) {
-    case FAN_OFF:  return "OFF";
-    case FAN_LOW:  return "FAN 1 / BASSE";
-    case FAN_HIGH: return "FAN 2 / HAUTE";
+    case FAN_OFF:  return "OFF / 21 kOhm";
+    case FAN_LOW:  return "FAN 1 / BASSE / 10 kOhm";
+    case FAN_HIGH: return "FAN 2 / HAUTE / 4 kOhm";
     default:       return "INCONNU";
     }
 }
@@ -42,9 +43,10 @@ static const char *control_name(fan_switch_t control)
 static void log_state(const char *prefix, fan_state_t state)
 {
     uint8_t mask = fan_relay_mask(state);
-    ESP_LOGI(TAG, "%s: mode=%s, échange=%s, K1(low)=%u K2(high)=%u K3(exchange)=%u",
+    ESP_LOGI(TAG,
+             "%s: mode=%s, échange=%s, K1(low10k)=%u K2(high4k)=%u K3(exchange0)=%u K4(off21k)=%u",
              prefix, mode_name(state.mode), state.exchange ? "ON" : "OFF",
-             !!(mask & 1), !!(mask & 2), !!(mask & 4));
+             !!(mask & 1), !!(mask & 2), !!(mask & 4), !!(mask & 8));
 }
 
 typedef struct {
@@ -92,7 +94,7 @@ esp_err_t fan_control_init(void)
     ESP_LOGI(TAG, "Initialisation relais: entrées actives HIGH, délai=%d ms",
              CONFIG_APP_RELAY_SETTLE_MS);
 #endif
-    /* Précharger l'état relâché avant d'activer chaque GPIO en sortie. */
+    /* Précharger les quatre sorties au repos avant de les configurer en sortie. */
     for (unsigned i = 0; i < FAN_RELAY_COUNT; ++i) {
         if (!write_relay(NULL, i, false)) return ESP_FAIL;
         gpio_config_t cfg = {
@@ -105,6 +107,8 @@ esp_err_t fan_control_init(void)
         esp_err_t err = gpio_config(&cfg);
         if (err != ESP_OK) return err;
     }
+
+    /* fan_controller_init() applique ensuite l'état sûr OFF : K4 seul fermé. */
     fan_io_t io = {.write_relay = write_relay, .settle = settle};
     if (!fan_controller_init(&controller, io)) return ESP_FAIL;
     log_state("Etat initial applique", controller.state);
@@ -142,7 +146,7 @@ static void fan_task(void *arg)
                 }
                 log_state("Etat applique", controller.state);
             } else {
-                ESP_LOGE(TAG, "Commande échouée; remise au repos tentée");
+                ESP_LOGE(TAG, "Commande échouée; retour vers OFF/K4 tenté");
                 if (controller.healthy) log_state("Etat de récupération", controller.state);
                 else ESP_LOGE(TAG, "Contrôleur relais en défaut; commandes bloquées");
             }
