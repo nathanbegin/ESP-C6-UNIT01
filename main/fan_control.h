@@ -3,10 +3,10 @@
 #include "esp_err.h"
 #include "fan_controller.h"
 
-#define FAN_RELAY1_GPIO 6
-#define FAN_RELAY2_GPIO 7
-#define FAN_RELAY3_GPIO 10
-#define FAN_RELAY4_GPIO 11
+#define FAN_RELAY_LOW_GPIO       6
+#define FAN_RELAY_HIGH_GPIO      7
+#define FAN_RELAY_EXCHANGE_GPIO 10
+#define FAN_RELAY_COUNT          3
 
 typedef void (*fan_state_callback_t)(fan_state_t state);
 
