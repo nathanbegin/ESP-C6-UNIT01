@@ -29,7 +29,11 @@ typedef struct {
  *   1 = K2 Fan High (branche 4 kΩ)
  *   2 = K3 échange extérieur (liaison directe J13-J14)
  *
- * Invariant : exchange=true n'est valide qu'en FAN_HIGH.
+ * États physiques permis, strictement exclusifs :
+ *   {FAN_OFF,  false} -> aucun relais
+ *   {FAN_LOW,  false} -> K1 seul
+ *   {FAN_HIGH, false} -> K2 seul
+ *   {FAN_OFF,  true } -> K3 seul (échange extérieur)
  */
 bool fan_controller_init(fan_controller_t *fan, fan_io_t io);
 bool fan_controller_apply(fan_controller_t *fan, fan_state_t target);
