@@ -108,6 +108,18 @@ bash tests/run.sh
 
 Les tests hôtes couvrent les 36 transitions, l'ordre de commutation, les modes exclusifs, les commandes OFF périmées, les erreurs GPIO simulées et le convertisseur. Les imports Zigbee2MQTT sont simulés; les variantes CJS/ESM sont comparées.
 
+Le moniteur série à 115200 bauds trace chaque commande reçue, son acceptation dans la file, l'état avant/après et chaque bobine commandée avec son GPIO et son niveau électrique. Par exemple :
+
+```text
+I (...) ZB_DOOR: Commande On/Off reçue: endpoint=5, valeur=ON
+I (...) FAN: Commande Zigbee acceptée: FAN 1 / BASSE -> ON
+I (...) FAN: K1 GPIO6 -> bobine ACTIVEE (niveau=LOW)
+I (...) FAN: K2 GPIO7 -> bobine ACTIVEE (niveau=LOW)
+I (...) FAN: Etat applique: mode=FAN 1 / BASSE, échange=OFF, K1=1 K2=1 K3=0 K4=0
+```
+
+Ces traces confirment les niveaux demandés aux GPIO. Elles ne constituent pas un retour mécanique des contacts du relais.
+
 Le workflow [Firmware validation](https://github.com/nathanbegin/ESP-C6-UNIT01/actions) teste la logique et compile dans ESP-IDF 5.5.4. Une compilation réussie fournit les binaires en artefact. Vérifier le résultat du commit concerné. Les essais électriques et Zigbee sur la carte ne sont pas remplacés par ces tests.
 
 `build/` et `managed_components/` sont exclus. L'import initial provient de `ESP-C6-UNIT01_2026-09-14.zip`; [l'analyse d'origine](docs/ANALYSE.md) et [l'ancien README](docs/README-original.md) sont conservés à titre historique.
