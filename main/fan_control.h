@@ -6,11 +6,12 @@
 #define FAN_RELAY_LOW_GPIO       6
 #define FAN_RELAY_HIGH_GPIO      7
 #define FAN_RELAY_EXCHANGE_GPIO 10
-#define FAN_RELAY_COUNT          3
+#define FAN_RELAY_OFF_GPIO      11
+#define FAN_RELAY_COUNT          4
 
 typedef void (*fan_state_callback_t)(fan_state_t state);
 
-/* Initialize released coils in BOTH boot modes, before starting Zigbee/Wi-Fi. */
+/* Initialize relay outputs in the safe OFF state: K4 active, K1/K2/K3 released. */
 esp_err_t fan_control_init(void);
 esp_err_t fan_control_start(fan_state_callback_t callback);
 
