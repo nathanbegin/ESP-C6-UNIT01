@@ -25,15 +25,19 @@ typedef struct {
 
 /*
  * Indexes relais :
- *   0 = K1 Fan Low  (branche 21 kΩ)
+ *   0 = K1 Fan Low  (branche 10 kΩ)
  *   1 = K2 Fan High (branche 4 kΩ)
- *   2 = K3 échange extérieur (liaison directe J13-J14)
+ *   2 = K3 échange extérieur (liaison directe J13-J14, ≈ 0 Ω)
+ *   3 = K4 unité OFF (branche 21 kΩ)
  *
  * États physiques permis, strictement exclusifs :
- *   {FAN_OFF,  false} -> aucun relais
+ *   {FAN_OFF,  false} -> K4 seul
  *   {FAN_LOW,  false} -> K1 seul
  *   {FAN_HIGH, false} -> K2 seul
  *   {FAN_OFF,  true } -> K3 seul (échange extérieur)
+ *
+ * Un état normal a exactement un relais actif. Pendant une transition
+ * break-before-make, tous les relais peuvent être momentanément ouverts.
  */
 bool fan_controller_init(fan_controller_t *fan, fan_io_t io);
 bool fan_controller_apply(fan_controller_t *fan, fan_state_t target);
