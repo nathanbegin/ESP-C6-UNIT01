@@ -14,7 +14,7 @@ config APP_RELAY_SETTLE_MS
     default 30
     help
         Must exceed the module's relay operate/release/bounce times.
-        Speed changes use break-before-make between K1 (Low) and K2 (High).
-        K3 (exchange) opens before leaving High and closes only after High is selected.
+        Low (K1), High (K2) and Exchange (K3) are mutually exclusive.
+        Every change opens the active contact before another one is closed.
 
 endmenu
