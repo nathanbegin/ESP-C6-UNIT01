@@ -25,9 +25,19 @@ const switches = {
         if (!name || ![0, 1, false, true].includes(value)) return {};
         const on = Boolean(value);
         const state = {[`state_${name}`]: on ? 'ON' : 'OFF'};
-        // These are exclusive logical speeds, not independent relay coils.
-        if (on && name === 'fan1') state.state_fan2 = 'OFF';
+
+        // États logiques imposés par le firmware : Low et High sont exclusifs,
+        // et l'échange extérieur ne peut exister qu'avec High actif.
+        if (on && name === 'fan1') {
+            state.state_fan2 = 'OFF';
+            state.state_exchange = 'OFF';
+        }
         if (on && name === 'fan2') state.state_fan1 = 'OFF';
+        if (!on && name === 'fan2') state.state_exchange = 'OFF';
+        if (on && name === 'exchange') {
+            state.state_fan1 = 'OFF';
+            state.state_fan2 = 'ON';
+        }
         return state;
     },
 };
@@ -40,8 +50,7 @@ const switchCommands = {
             throw new Error('État attendu : ON, OFF ou TOGGLE');
         }
         await entity.command('genOnOff', value.toLowerCase(), {}, {disableDefaultResponse: false});
-        // Wait for the firmware report after the switching sequence. Never
-        // optimistically show both speeds ON or overwrite a newer report.
+        // Attendre le rapport du firmware après la séquence de relais.
         return {};
     },
     convertGet: async (entity) => {
@@ -54,7 +63,7 @@ export default {
     zigbeeModel: ['ESP-C6-UNIT01'],
     model: 'ESP-C6-UNIT01',
     vendor: 'NathanSensors',
-    description: 'ESP32-C6 - 3 portes, LED, Fan 1/Fan 2 exclusifs et échange extérieur',
+    description: 'ESP32-C6 - 3 portes, LED, Fan Low/High et échange extérieur interverrouillé',
     fromZigbee: [contacts, switches],
     toZigbee: [switchCommands],
     exposes: [
@@ -62,9 +71,9 @@ export default {
         e.contact().withEndpoint('door2'),
         e.contact().withEndpoint('door3'),
         e.switch().withEndpoint('led'),
-        e.switch().withEndpoint('fan1').withDescription('Basse vitesse. ON désactive Fan 2; OFF arrête si Fan 1 est actif.'),
-        e.switch().withEndpoint('fan2').withDescription('Haute vitesse. ON désactive Fan 1; OFF arrête si Fan 2 est actif.'),
-        e.switch().withEndpoint('exchange').withDescription('Ferme SW2 : demande échange extérieur. Indépendant de la vitesse.'),
+        e.switch().withEndpoint('fan1').withDescription('Basse vitesse. ON coupe Fan High et désactive l’échange extérieur.'),
+        e.switch().withEndpoint('fan2').withDescription('Haute vitesse. Requise pour l’échange extérieur; OFF arrête aussi l’échange.'),
+        e.switch().withEndpoint('exchange').withDescription('Échange extérieur. ON force d’abord Fan High; OFF conserve Fan High.'),
     ],
     endpoint: () => endpoints,
     meta: {multiEndpoint: true},
