@@ -26,17 +26,18 @@ const switches = {
         const on = Boolean(value);
         const state = {[`state_${name}`]: on ? 'ON' : 'OFF'};
 
-        // États logiques imposés par le firmware : Low et High sont exclusifs,
-        // et l'échange extérieur ne peut exister qu'avec High actif.
+        // Low, High et Exchange sont trois états physiques mutuellement exclusifs.
         if (on && name === 'fan1') {
             state.state_fan2 = 'OFF';
             state.state_exchange = 'OFF';
         }
-        if (on && name === 'fan2') state.state_fan1 = 'OFF';
-        if (!on && name === 'fan2') state.state_exchange = 'OFF';
+        if (on && name === 'fan2') {
+            state.state_fan1 = 'OFF';
+            state.state_exchange = 'OFF';
+        }
         if (on && name === 'exchange') {
             state.state_fan1 = 'OFF';
-            state.state_fan2 = 'ON';
+            state.state_fan2 = 'OFF';
         }
         return state;
     },
@@ -63,7 +64,7 @@ export default {
     zigbeeModel: ['ESP-C6-UNIT01'],
     model: 'ESP-C6-UNIT01',
     vendor: 'NathanSensors',
-    description: 'ESP32-C6 - 3 portes, LED, Fan Low/High et échange extérieur interverrouillé',
+    description: 'ESP32-C6 - 3 portes, LED, Fan Low/High et échange extérieur exclusifs',
     fromZigbee: [contacts, switches],
     toZigbee: [switchCommands],
     exposes: [
@@ -71,9 +72,9 @@ export default {
         e.contact().withEndpoint('door2'),
         e.contact().withEndpoint('door3'),
         e.switch().withEndpoint('led'),
-        e.switch().withEndpoint('fan1').withDescription('Basse vitesse. ON coupe Fan High et désactive l’échange extérieur.'),
-        e.switch().withEndpoint('fan2').withDescription('Haute vitesse. Requise pour l’échange extérieur; OFF arrête aussi l’échange.'),
-        e.switch().withEndpoint('exchange').withDescription('Échange extérieur. ON force d’abord Fan High; OFF conserve Fan High.'),
+        e.switch().withEndpoint('fan1').withDescription('Basse vitesse : K1/GPIO6 seul, branche 21 kΩ. ON coupe High et Exchange.'),
+        e.switch().withEndpoint('fan2').withDescription('Haute vitesse : K2/GPIO7 seul, branche 4 kΩ. ON coupe Low et Exchange.'),
+        e.switch().withEndpoint('exchange').withDescription('Échange extérieur : K3/GPIO10 seul, liaison directe J13-J14. ON coupe Low et High.'),
     ],
     endpoint: () => endpoints,
     meta: {multiEndpoint: true},
