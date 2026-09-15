@@ -14,6 +14,7 @@ config APP_RELAY_SETTLE_MS
     default 30
     help
         Must exceed the module's relay operate/release/bounce times.
-        Transitions open K4 and pass through position 1 before changing speed.
+        Speed changes use break-before-make between K1 (Low) and K2 (High).
+        K3 (exchange) opens before leaving High and closes only after High is selected.
 
 endmenu
