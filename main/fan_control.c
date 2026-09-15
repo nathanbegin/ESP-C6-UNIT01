@@ -129,10 +129,8 @@ static void fan_task(void *arg)
             }
             log_state("Etat avant", before);
             if (command.set_mode) {
-                fan_state_t target = controller.state;
-                target.mode = command.mode;
-                /* Toute sortie de Fan High annule obligatoirement l'échange. */
-                if (target.mode != FAN_HIGH) target.exchange = false;
+                /* Une commande de mode sélectionne Off/Low/High et quitte Exchange. */
+                fan_state_t target = {.mode = command.mode, .exchange = false};
                 ok = fan_controller_apply(&controller, target);
             } else {
                 ok = fan_controller_switch(&controller, command.control, command.on);
