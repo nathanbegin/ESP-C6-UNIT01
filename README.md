@@ -199,6 +199,8 @@ La logique indépendante du matériel est dans `main/fan_controller.c`; son adap
 bash tests/run.sh
 ```
 
+Les tests OTA couvrent les blocs fragmentés, les transferts tronqués, les formats invalides, les erreurs flash, les interruptions et les versions incompatibles. Les tests de packaging vérifient le format `.ota`, les tailles et la conservation des adresses NVS/Zigbee.
+
 Les tests hôtes couvrent les **16 transitions entre les quatre états sûrs**, le break-before-make, l'exclusivité K1/K2/K3/K4, les commandes OFF périmées, les erreurs GPIO simulées et le convertisseur Zigbee2MQTT.
 
 Le moniteur série à 115200 bauds trace chaque commande, l'état avant/après et chaque bobine commandée. Exemple Exchange depuis High :
