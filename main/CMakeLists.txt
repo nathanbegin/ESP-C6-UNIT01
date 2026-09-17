@@ -4,6 +4,7 @@ idf_component_register(
         "app_config.c"
         "fan_controller.c"
         "fan_control.c"
+        "ota_client.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp-zigbee-lib
@@ -11,6 +12,7 @@ idf_component_register(
         led_strip
         driver
         nvs_flash
+        app_update
         freertos
         esp_driver_gpio
         esp_wifi
